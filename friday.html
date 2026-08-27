@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>周五午餐意願調查表</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#fff;color:#3d3d3d;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang TC","Noto Sans TC",sans-serif}
+  .copy{position:fixed;left:24px;top:22px;z-index:2;pointer-events:none}
+  .copy h1{font-size:28px;line-height:1.2;margin:0 0 34px;font-weight:700}
+  .copy p{font-size:17px;margin:0;color:#555}
+  canvas{display:block;width:100vw;height:100vh}
+  .hint{position:fixed;right:18px;bottom:14px;font-size:12px;color:#aaa;z-index:3}
+</style>
+</head>
+<body>
+  <div class="copy">
+    <h1>周五午餐想吃什麼</h1>
+    <p>提供了豐富選項給大家選擇</p>
+  </div>
+ <div class="button">
+  <button>送出</button>
+  <canvas id="c"></canvas>
+  <div class="hint">請大家積極作答</div>
+<script>
+const canvas = document.querySelector('#c');
+const ctx = canvas.getContext('2d');
+let dpr = Math.min(devicePixelRatio || 1, 2);
+let W=0,H=0;
+
+const form = {
+  x: 0, y: 0,
+  title: '周五午餐想吃什麼',
+  options: ['垃圾食物(麥當勞/炸雞/披薩/泡麵...)','健康便當','鹹水雞','早午餐'],
+  selected: 0,
+  titleSize: 22,
+  fontSize: 17,
+  lineH: 44
+};
+
+const optionState = form.options.map((_,i)=>(
+  i===0 ? {alpha:1,target:1,disabled:false,restoreAt:0,burst:false,nearSince:0} :
+          {alpha:1,target:1,disabled:false,restoreAt:0,burst:false,nearSince:0}
+));
+
+const particles=[];
+const mouse={x:-9999,y:-9999,px:-9999,py:-9999,speed:0};
+
+function resize(){
+  W=innerWidth; H=innerHeight;
+  canvas.width=Math.round(W*dpr); canvas.height=Math.round(H*dpr);
+  canvas.style.width=W+'px'; canvas.style.height=H+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  form.x=Math.max(300, W*0.36);
+  form.y=Math.max(150, H*0.28);
+}
+addEventListener('resize', resize); resize();
+
+function radioY(i){return form.y+52+i*form.lineH}
+function optionBounds(i){
+  const y=radioY(i);
+  return {x:form.x-10,y:y-22,w:335,h:44,cx:form.x+145,cy:y};
+}
+
+function drawRadio(x,y,selected,alpha=1){
+  ctx.save(); ctx.globalAlpha=alpha;
+  ctx.lineWidth=2; ctx.strokeStyle=selected?'#2f80ed':'#aaa';
+  ctx.beginPath();ctx.arc(x,y,12,0,Math.PI*2);ctx.stroke();
+  if(selected){ctx.fillStyle='#2f80ed';ctx.beginPath();ctx.arc(x,y,6.5,0,Math.PI*2);ctx.fill();}
+  ctx.restore();
+}
+
+function drawForm(){
+  ctx.save();ctx.fillStyle='#333';
+  ctx.font=`700 ${form.titleSize}px sans-serif`;
+  ctx.fillText(form.title,form.x,form.y);
+  ctx.font=`400 ${form.fontSize}px sans-serif`;
+  form.options.forEach((t,i)=>{
+    const y=radioY(i), a=optionState[i].alpha;
+    if(a<=.01)return;
+    drawRadio(form.x+12,y,form.selected===i,a);
+    ctx.save();ctx.globalAlpha=a;ctx.fillStyle='#555';ctx.fillText(t,form.x+36,y+6);ctx.restore();
+  });
+  ctx.restore();
+}
+
+// 只把指定的一個選項畫到離屏 canvas，再取樣成粒子。
+const off=document.createElement('canvas');
+const octx=off.getContext('2d');
+function renderOptionOffscreen(i){
+  off.width=Math.round(W*dpr);off.height=Math.round(H*dpr);
+  octx.setTransform(dpr,0,0,dpr,0,0);octx.clearRect(0,0,W,H);
+  const y=radioY(i);
+  octx.lineWidth=2;octx.strokeStyle=form.selected===i?'#2f80ed':'#aaa';
+  octx.beginPath();octx.arc(form.x+12,y,12,0,Math.PI*2);octx.stroke();
+  if(form.selected===i){octx.fillStyle='#2f80ed';octx.beginPath();octx.arc(form.x+12,y,6.5,0,Math.PI*2);octx.fill();}
+  octx.font=`400 ${form.fontSize}px sans-serif`;octx.fillStyle='#555';octx.fillText(form.options[i],form.x+36,y+6);
+}
+
+function dissolveOption(i, pointerX, pointerY){
+  if(i===0 || optionState[i].disabled) return;
+  const st=optionState[i];
+  st.disabled=true;
+  st.target=0;
+  st.restoreAt=performance.now()+1500;
+  renderOptionOffscreen(i);
+  const b=optionBounds(i);
+  const sx=Math.max(0,Math.floor(b.x*dpr));
+  const sy=Math.max(0,Math.floor(b.y*dpr));
+  const sw=Math.min(off.width-sx,Math.ceil(b.w*dpr));
+  const sh=Math.min(off.height-sy,Math.ceil(b.h*dpr));
+  const data=octx.getImageData(sx,sy,sw,sh).data;
+  const step=Math.max(2,Math.round(3*dpr));
+
+  for(let yy=0;yy<sh;yy+=step){
+    for(let xx=0;xx<sw;xx+=step){
+      const k=(yy*sw+xx)*4;
+      if(data[k+3]<30) continue;
+      const x=sx/dpr+xx/dpr, y=sy/dpr+yy/dpr;
+      const dx=x-pointerX, dy=y-pointerY;
+      const dist=Math.max(8,Math.hypot(dx,dy));
+      // 以滑鼠為排斥中心，粒子往外噴散，並帶少量隨機偏移。
+      const nx=dx/dist, ny=dy/dist;
+      const speed=.75+Math.random()*1.65;
+      particles.push({
+        x,y,
+        vx:nx*speed+(Math.random()-.5)*.9 + (mouse.x-mouse.px)*.035,
+        vy:ny*speed+(Math.random()-.5)*.9 + (mouse.y-mouse.py)*.035,
+        life:1,
+        decay:.006+Math.random()*.007,
+        size:Math.random()<.15?2.1:1.15,
+        c:`rgb(${data[k]},${data[k+1]},${data[k+2]})`
+      });
+    }
+  }
+  if(particles.length>5000)particles.splice(0,particles.length-5000);
+}
+
+function updateOptionStates(now){
+  optionState.forEach((st,i)=>{
+    st.alpha += (st.target-st.alpha)*.085;
+    if(i===0)return;
+    if(st.disabled && now>st.restoreAt){
+      const b=optionBounds(i);
+      const dx=Math.max(b.x-mouse.x,0,mouse.x-(b.x+b.w));
+      const dy=Math.max(b.y-mouse.y,0,mouse.y-(b.y+b.h));
+      const far=Math.hypot(dx,dy)>85;
+      if(far){
+        st.disabled=false;
+        st.target=1;
+      } else {
+        st.restoreAt=now+180;
+      }
+    }
+  });
+}
+
+function updateParticles(){
+  for(let i=particles.length-1;i>=0;i--){
+    const p=particles[i];
+    p.x+=p.vx; p.y+=p.vy;
+    p.vx*=.991; p.vy*=.991;
+    p.vy+=(Math.random()-.5)*.018;
+    p.life-=p.decay;
+    if(p.life<=0)particles.splice(i,1);
+  }
+}
+function drawParticles(){
+  for(const p of particles){
+    ctx.globalAlpha=Math.max(0,p.life)*.9;ctx.fillStyle=p.c;
+    ctx.fillRect(p.x,p.y,p.size,p.size);
+  }
+  ctx.globalAlpha=1;
+}
+
+function loop(now){
+  ctx.clearRect(0,0,W,H);
+  updateOptionStates(now);
+  drawForm();
+  updateParticles();drawParticles();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+addEventListener('pointermove',e=>{
+  mouse.px=mouse.x;mouse.py=mouse.y;mouse.x=e.clientX;mouse.y=e.clientY;
+  mouse.speed=Math.hypot(mouse.x-mouse.px,mouse.y-mouse.py);
+
+  // 必須非常靠近才觸發，並故意保留一點點「差點能點到」的停頓。
+  for(let i=1;i<form.options.length;i++){
+    const st=optionState[i];
+    if(st.disabled) continue;
+    const b=optionBounds(i);
+    // 縮小感應區：主要貼近 radio 與文字本體，不在整行外圍就觸發。
+    const hit={x:b.x+5,y:b.y+8,w:Math.min(255,b.w-10),h:b.h-16};
+    const cx=Math.max(hit.x,Math.min(mouse.x,hit.x+hit.w));
+    const cy=Math.max(hit.y,Math.min(mouse.y,hit.y+hit.h));
+    const distance=Math.hypot(mouse.x-cx,mouse.y-cy);
+
+    if(distance<10){
+      if(!st.nearSince) st.nearSince=performance.now();
+      // 約 95ms 的猶豫時間：視覺上像快點到了，才開始逃散。
+      if(performance.now()-st.nearSince>95){
+        dissolveOption(i,mouse.x,mouse.y);
+        st.nearSince=0;
+      }
+    } else {
+      st.nearSince=0;
+    }
+  }
+});
+
+addEventListener('pointerdown',e=>{
+  // 唯一可點擊的選項：喝都喝。
+  const b=optionBounds(0);
+  if(e.clientX>b.x && e.clientX<b.x+b.w && e.clientY>b.y && e.clientY<b.y+b.h){
+    form.selected=0;
+  }
+});
+</script>
+</body>
+</html>
